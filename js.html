@@ -1,0 +1,209 @@
+document.addEventListener('DOMContentLoaded', () => {
+    // Получаем все нужные элементы со страницы
+    const canvas = document.getElementById('artboard');
+    const ctx = canvas.getContext('2d');
+
+    const sizeRadios = document.getElementsByName('artboardSize');
+    const logoUpload = document.getElementById('logoUpload');
+    const logoSizeSlider = document.getElementById('logoSize');
+    const backgroundTypeSelect = document.getElementById('backgroundType');
+    const solidColorInput = document.getElementById('solidColor');
+    const gradientColor1Input = document.getElementById('gradientColor1');
+    const gradientColor2Input = document.getElementById('gradientColor2');
+    const solidColorSettings = document.getElementById('solidColorSettings');
+    const gradientColorSettings = document.getElementById('gradientColorSettings');
+    const footageSelect = document.getElementById('footageSelect');
+    const exportButton = document.getElementById('exportButton');
+    const loadingStatus = document.getElementById('loadingStatus');
+    const exportStatus = document.getElementById('exportStatus');
+
+    // Переменные для хранения состояния
+    let logoImage = null;
+    let logoScale = 1.0;
+    let footageFrames = [];
+    let currentFrame = 0;
+    let animationFrameId;
+
+    // Конфигурация для разных наборов футажей
+    const footageConfig = {
+        fastfood: { path: 'footage/fastfood/fastfood ({i}).webp', count: 54 },
+        // Пример: 'sushi': { path: 'footage/sushi/sushi_{i}.webp', count: 60 },
+    };
+
+    // --- ОСНОВНЫЕ ФУНКЦИИ ---
+
+    // Главная функция отрисовки. Она вызывается при любом изменении.
+    function drawCanvas() {
+        if (!ctx) return;
+
+        // Слой 1: Фон (сплошной цвет или градиент)
+        ctx.clearRect(0, 0, canvas.width, canvas.height);
+        if (backgroundTypeSelect.value === 'solid') {
+            ctx.fillStyle = solidColorInput.value;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+        } else {
+            const gradient = ctx.createLinearGradient(0, 0, canvas.width, canvas.height);
+            gradient.addColorStop(0, gradientColor1Input.value);
+            gradient.addColorStop(1, gradientColor2Input.value);
+            ctx.fillStyle = gradient;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+
+        // Слой 2: Логотип (по центру)
+        if (logoImage) {
+            const scaledWidth = logoImage.width * logoScale;
+            const scaledHeight = logoImage.height * logoScale;
+            const x = (canvas.width - scaledWidth) / 2;
+            const y = (canvas.height - scaledHeight) / 2;
+            ctx.drawImage(logoImage, x, y, scaledWidth, scaledHeight);
+        }
+
+        // Слой 3: Футаж (поверх всего)
+        if (footageFrames.length > 0 && footageFrames[currentFrame]?.complete) {
+            const frame = footageFrames[currentFrame];
+            ctx.drawImage(frame, 0, 0, canvas.width, canvas.height);
+        }
+    }
+
+    // Функция для плавной анимации
+    function animate() {
+        currentFrame = (currentFrame + 1) % footageFrames.length;
+        drawCanvas();
+        animationFrameId = requestAnimationFrame(animate);
+    }
+    
+    // Асинхронная функция для загрузки всех кадров футажа
+    async function loadFootage(key) {
+        cancelAnimationFrame(animationFrameId); // Останавливаем старую анимацию
+        footageFrames = [];
+        loadingStatus.textContent = 'Загрузка футажа...';
+        exportButton.disabled = true;
+
+        if (key === 'none' || !footageConfig[key]) {
+            loadingStatus.textContent = '';
+            exportButton.disabled = false;
+            drawCanvas(); // Просто перерисовываем холст без анимации
+            return;
+        }
+
+        const config = footageConfig[key];
+        const promises = [];
+        for (let i = 1; i <= config.count; i++) {
+            const img = new Image();
+            img.src = config.path.replace('{i}', i);
+            promises.push(new Promise(resolve => img.onload = () => resolve(img)));
+        }
+
+        try {
+            footageFrames = await Promise.all(promises);
+            loadingStatus.textContent = 'Футаж загружен!';
+            setTimeout(() => loadingStatus.textContent = '', 2000);
+            currentFrame = 0;
+            animate(); // Запускаем анимацию
+        } catch (error) {
+            console.error('Ошибка загрузки футажа:', error);
+            loadingStatus.textContent = 'Ошибка загрузки!';
+        } finally {
+            exportButton.disabled = false;
+        }
+    }
+
+    // Функция экспорта видео
+    function handleExport() {
+        if (footageFrames.length === 0) {
+            alert('Сначала выберите футаж для экспорта.');
+            return;
+        }
+
+        exportButton.disabled = true;
+        exportStatus.textContent = 'Идет запись видео... 0%';
+
+        const capturer = new CCapture({
+            format: 'webm',
+            framerate: 24, // Частота кадров
+            verbose: false,
+        });
+
+        capturer.start();
+        
+        // Проходим по всем кадрам, отрисовываем и записываем каждый
+        for (let i = 0; i < footageFrames.length; i++) {
+            currentFrame = i;
+            drawCanvas();
+            capturer.capture(canvas);
+            const progress = Math.round(((i + 1) / footageFrames.length) * 100);
+            exportStatus.textContent = `Идет запись видео... ${progress}%`;
+        }
+
+        capturer.stop();
+        capturer.save(); // Предлагает пользователю скачать файл
+        
+        exportStatus.textContent = 'Видео сохранено!';
+        setTimeout(() => exportStatus.textContent = '', 3000);
+        exportButton.disabled = false;
+    }
+
+
+    // --- ОБРАБОТЧИКИ СОБЫТИЙ ---
+
+    // Изменение размера артборда
+    sizeRadios.forEach(radio => radio.addEventListener('change', (e) => {
+        const [width, height] = e.target.value.split('x');
+        canvas.width = parseInt(width, 10);
+        canvas.height = parseInt(height, 10);
+        drawCanvas();
+    }));
+    
+    // Загрузка файла с логотипом
+    logoUpload.addEventListener('change', (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                logoImage = new Image();
+                logoImage.onload = () => drawCanvas();
+                logoImage.src = event.target.result;
+            };
+            reader.readAsDataURL(file);
+        }
+    });
+
+    // Изменение масштаба логотипа
+    logoSizeSlider.addEventListener('input', (e) => {
+        logoScale = parseFloat(e.target.value) / 100;
+        drawCanvas();
+    });
+
+    // Переключение типа фона
+    backgroundTypeSelect.addEventListener('change', (e) => {
+        const isSolid = e.target.value === 'solid';
+        solidColorSettings.style.display = isSolid ? 'block' : 'none';
+        gradientColorSettings.style.display = isSolid ? 'none' : 'block';
+        drawCanvas();
+    });
+
+    // Изменение цветов фона
+    [solidColorInput, gradientColor1Input, gradientColor2Input].forEach(input => {
+        input.addEventListener('input', drawCanvas);
+    });
+
+    // Выбор футажа из списка
+    footageSelect.addEventListener('change', (e) => {
+        loadFootage(e.target.value);
+    });
+
+    // Нажатие кнопки экспорта
+    exportButton.addEventListener('click', handleExport);
+
+
+    // --- ИНИЦИАЛИЗАЦИЯ ПРИ ЗАГРУЗКЕ СТРАНИЦЫ ---
+    function initialize() {
+        const initialSize = document.querySelector('input[name="artboardSize"]:checked').value;
+        const [width, height] = initialSize.split('x');
+        canvas.width = parseInt(width, 10);
+        canvas.height = parseInt(height, 10);
+        drawCanvas(); // Первая отрисовка
+    }
+    
+    initialize();
+});

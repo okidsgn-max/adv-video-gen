@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Онлайн Видео Генератор</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <div class="app-container">
+        <div class="settings-panel">
+            <h2>Настройки видео</h2>
+
+            <div class="setting-group">
+                <label>Размер артборда:</label>
+                <div class="radio-group">
+                    <input type="radio" id="size1920" name="artboardSize" value="1920x1080" checked>
+                    <label for="size1920">1920x1080</label>
+                    <input type="radio" id="size1280" name="artboardSize" value="1280x720">
+                    <label for="size1280">1280x720</label>
+                </div>
+            </div>
+
+            <div class="setting-group">
+                <label for="logoUpload">Логотип (PNG, SVG):</label>
+                <input type="file" id="logoUpload" accept="image/png, image/svg+xml">
+            </div>
+            
+            <div class="setting-group">
+                <label for="logoSize">Масштаб логотипа:</label>
+                <input type="range" id="logoSize" min="10" max="200" value="100">
+            </div>
+
+            <div class="setting-group">
+                <label>Тип фона:</label>
+                <select id="backgroundType">
+                    <option value="solid">Сплошной цвет</option>
+                    <option value="gradient">Градиент</option>
+                </select>
+                <div id="solidColorSettings">
+                    <label for="solidColor">Цвет:</label>
+                    <input type="color" id="solidColor" value="#ffffff">
+                </div>
+                <div id="gradientColorSettings" style="display: none;">
+                    <label for="gradientColor1">Цвет 1:</label>
+                    <input type="color" id="gradientColor1" value="#f093fb">
+                    <label for="gradientColor2">Цвет 2:</label>
+                    <input type="color" id="gradientColor2" value="#f5576c">
+                </div>
+            </div>
+
+            <div class="setting-group">
+                <label for="footageSelect">Выбор футажа:</label>
+                <select id="footageSelect">
+                    <option value="none">Без футажа</option>
+                    <option value="fastfood">Фастфуд (54 кадра)</option>
+                    </select>
+            </div>
+            
+            <div class="export-section">
+                 <button id="exportButton">Экспорт в .WEBM</button>
+                 <p id="exportStatus" class="status"></p>
+            </div>
+        </div>
+
+        <div class="preview-panel">
+            <canvas id="artboard" width="1920" height="1080"></canvas>
+            <p id="loadingStatus" class="status"></p>
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/ccapture.js@1.1.0/build/CCapture.all.min.js"></script>
+    <script src="script.js"></script>
+</body>
+</html>
