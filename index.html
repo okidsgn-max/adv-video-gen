@@ -79,28 +79,35 @@
             padding-top: 20px;
             margin-top: 20px;
         }
-        #exportButton {
+        .export-buttons {
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .export-button {
             width: 100%;
             padding: 12px;
             font-size: 1em;
             font-weight: bold;
             color: white;
-            background: linear-gradient(45deg, #007BFF, #0056b3);
             border: none;
             border-radius: 8px;
             cursor: pointer;
             transition: transform 0.2s, box-shadow 0.2s;
         }
-        #exportButton:hover {
+        .export-button:hover:not(:disabled) {
             transform: translateY(-2px);
             box-shadow: 0 6px 15px rgba(0, 123, 255, 0.3);
         }
-        #exportButton:disabled {
-            background: #aaa;
+        .export-button:disabled {
+            background: #aaa !important;
             cursor: not-allowed;
             transform: none;
             box-shadow: none;
         }
+        #exportWebM { background: linear-gradient(45deg, #007BFF, #0056b3); }
+        #exportH264 { background: linear-gradient(45deg, #28a745, #1e7e34); }
+        #exportH265 { background: linear-gradient(45deg, #dc3545, #c82333); }
         .status {
             text-align: center;
             margin-top: 10px;
@@ -109,6 +116,11 @@
         }
         #loadingStatus { color: #007BFF; }
         #exportStatus { color: #28a745; }
+        .codec-info {
+            font-size: 0.8em;
+            color: #666;
+            margin-top: 5px;
+        }
     </style>
 </head>
 <body>
@@ -163,8 +175,17 @@
             </div>
             
             <div class="export-section">
-                 <button id="exportButton">Экспорт в .WEBM</button>
-                 <p id="exportStatus" class="status"></p>
+                <div class="export-buttons">
+                    <button id="exportWebM" class="export-button">Экспорт в WebM (VP9)</button>
+                    <button id="exportH264" class="export-button">Экспорт в MP4 (H.264)</button>
+                    <button id="exportH265" class="export-button">Экспорт в MP4 (H.265)</button>
+                </div>
+                <p id="exportStatus" class="status"></p>
+                <div class="codec-info">
+                    • WebM: быстрый экспорт, хорошее качество<br>
+                    • H.264: отличная совместимость<br>
+                    • H.265: лучшее качество (требует времени)
+                </div>
             </div>
         </div>
 
@@ -175,6 +196,8 @@
     </div>
 
     <script src="https://unpkg.com/ccapture.js@1.1.0/build/CCapture.all.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/h264-mp4-encoder@1.0.0/dist/H264MP4Encoder.min.js"></script>
+    <script src="https://unpkg.com/@ffmpeg/ffmpeg@0.10.0/dist/ffmpeg.min.js"></script>
     
     <script>
         document.addEventListener('DOMContentLoaded', () => {
@@ -195,22 +218,44 @@
             const solidColorSettings = document.getElementById('solidColorSettings');
             const gradientColorSettings = document.getElementById('gradientColorSettings');
             const footageSelect = document.getElementById('footageSelect');
-            const exportButton = document.getElementById('exportButton');
+            const exportWebMButton = document.getElementById('exportWebM');
+            const exportH264Button = document.getElementById('exportH264');
+            const exportH265Button = document.getElementById('exportH265');
             const loadingStatus = document.getElementById('loadingStatus');
             const exportStatus = document.getElementById('exportStatus');
 
             // Состояние
             let logoImage = null;
             let logoScale = 1.0;
-            let footageFrames = []; // Массив для хранения кадров
-            let currentFrame = 0;   // Текущий кадр анимации
+            let footageFrames = [];
+            let currentFrame = 0;
             let animationFrameId;
+            let ffmpeg = null;
+            let ffmpegLoaded = false;
 
             // Конфиг для футажей
             const footageConfig = {
-                // ОБНОВЛЕНО: 54 кадра
                 fastfood: { path: 'footage/fastfood1/fastfood ({i}).webp', count: 54 }
             };
+
+            // Инициализация FFmpeg
+            async function initFFmpeg() {
+                if (!ffmpegLoaded && window.FFmpeg) {
+                    try {
+                        const { createFFmpeg } = FFmpeg;
+                        ffmpeg = createFFmpeg({ 
+                            log: false,
+                            corePath: 'https://unpkg.com/@ffmpeg/core@0.11.0/dist/ffmpeg-core.js'
+                        });
+                        await ffmpeg.load();
+                        ffmpegLoaded = true;
+                        console.log('FFmpeg loaded successfully');
+                    } catch (error) {
+                        console.error('FFmpeg loading failed:', error);
+                    }
+                }
+                return ffmpegLoaded;
+            }
 
             // === ПОРЯДОК СЛОЕВ: 1. ФОН, 2. ФУТАЖ, 3. ЛОГОТИП ===
             function drawFrame(ctx, width, height) {
@@ -241,7 +286,7 @@
                 }
             }
 
-            // Анимация превью (циклическая смена кадров)
+            // Анимация превью
             function animate() {
                 if (footageFrames.length > 0) {
                     currentFrame = (currentFrame + 1) % footageFrames.length;
@@ -250,17 +295,17 @@
                 animationFrameId = requestAnimationFrame(animate);
             }
             
-            // Асинхронная загрузка кадров
+            // Загрузка футажа
             async function loadFootage(key) {
                 cancelAnimationFrame(animationFrameId);
                 footageFrames = [];
                 loadingStatus.textContent = 'Загрузка футажа...';
-                exportButton.disabled = true;
+                setExportButtonsDisabled(true);
 
                 if (key === 'none' || !footageConfig[key]) {
                     loadingStatus.textContent = '';
-                    exportButton.disabled = false;
-                    animate(); // Запускаем анимацию для статики (лого/фон)
+                    setExportButtonsDisabled(false);
+                    animate();
                     return;
                 }
 
@@ -269,7 +314,6 @@
                 for (let i = 1; i <= config.count; i++) {
                     const img = new Image();
                     img.src = config.path.replace('{i}', i);
-                    // Добавляем обещание, которое разрешается при загрузке
                     promises.push(new Promise((resolve, reject) => {
                         img.onload = () => resolve(img);
                         img.onerror = () => reject(new Error(`Failed to load image: ${img.src}`));
@@ -285,51 +329,188 @@
                     console.error('Ошибка загрузки футажа:', error);
                     loadingStatus.textContent = 'Ошибка загрузки!';
                 } finally {
-                    exportButton.disabled = false;
-                    animate(); // Запускаем анимацию в любом случае
+                    setExportButtonsDisabled(false);
+                    animate();
                 }
             }
 
-            // Экспорт (на основе загруженных кадров)
-            function handleExport() {
+            // Управление кнопками экспорта
+            function setExportButtonsDisabled(disabled) {
+                exportWebMButton.disabled = disabled;
+                exportH264Button.disabled = disabled;
+                exportH265Button.disabled = disabled;
+            }
+
+            // 1. Экспорт в WebM (оригинальный способ)
+            function handleExportWebM() {
                 if (footageFrames.length === 0) {
                     alert('Сначала выберите футаж для экспорта.');
                     return;
                 }
 
-                exportButton.disabled = true;
-                exportStatus.textContent = 'Идет запись видео... 0%';
+                setExportButtonsDisabled(true);
+                exportStatus.textContent = 'Идет запись видео WebM... 0%';
 
                 const capturer = new CCapture({
                     format: 'webm',
-                    framerate: 24, // Можете настроить частоту кадров
+                    framerate: 24,
                     verbose: false,
                 });
 
                 capturer.start();
                 
-                // Проходим по всем загруженным кадрам
                 for (let i = 0; i < footageFrames.length; i++) {
                     currentFrame = i;
-                    // Рисуем кадр на невидимом холсте
                     drawFrame(renderCtx, renderCanvas.width, renderCanvas.height); 
-                    // Захватываем кадр
                     capturer.capture(renderCanvas); 
                     
                     const progress = Math.round(((i + 1) / footageFrames.length) * 100);
-                    exportStatus.textContent = `Идет запись видео... ${progress}%`;
+                    exportStatus.textContent = `Идет запись видео WebM... ${progress}%`;
                 }
 
                 capturer.stop();
                 capturer.save();
                 
-                exportStatus.textContent = 'Видео сохранено!';
+                exportStatus.textContent = 'Видео WebM сохранено!';
                 setTimeout(() => exportStatus.textContent = '', 3000);
-                exportButton.disabled = false;
+                setExportButtonsDisabled(false);
             }
 
-            // --- ОБРАБОТЧИКИ СОБЫТИЙ ---
-            
+            // 2. Экспорт в H.264 с использованием h264-mp4-encoder
+            async function handleExportH264() {
+                if (footageFrames.length === 0) {
+                    alert('Сначала выберите футаж для экспорта.');
+                    return;
+                }
+
+                setExportButtonsDisabled(true);
+                exportStatus.textContent = 'Кодирование H.264... 0%';
+
+                try {
+                    const encoder = new H264MP4Encoder(renderCanvas.width, renderCanvas.height, 24);
+                    
+                    for (let i = 0; i < footageFrames.length; i++) {
+                        currentFrame = i;
+                        drawFrame(renderCtx, renderCanvas.width, renderCanvas.height);
+                        
+                        const imageData = renderCtx.getImageData(0, 0, renderCanvas.width, renderCanvas.height);
+                        encoder.addFrameRgba(imageData.data);
+                        
+                        const progress = Math.round(((i + 1) / footageFrames.length) * 100);
+                        exportStatus.textContent = `Кодирование H.264... ${progress}%`;
+                        
+                        // Даем браузеру обновить интерфейс
+                        await new Promise(resolve => setTimeout(resolve, 0));
+                    }
+                    
+                    encoder.finalize();
+                    const uint8Array = encoder.FS.readFile(encoder.outputFilename);
+                    
+                    // Скачивание
+                    const blob = new Blob([uint8Array], { type: 'video/mp4' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'animation-h264.mp4';
+                    a.click();
+                    URL.revokeObjectURL(url);
+                    
+                    encoder.delete();
+                    
+                    exportStatus.textContent = 'Видео H.264 сохранено!';
+                } catch (error) {
+                    console.error('Ошибка кодирования H.264:', error);
+                    exportStatus.textContent = 'Ошибка кодирования H.264!';
+                } finally {
+                    setTimeout(() => exportStatus.textContent = '', 3000);
+                    setExportButtonsDisabled(false);
+                }
+            }
+
+            // 3. Экспорт в H.265 с использованием FFmpeg
+            async function handleExportH265() {
+                if (footageFrames.length === 0) {
+                    alert('Сначала выберите футаж для экспорта.');
+                    return;
+                }
+
+                if (!await initFFmpeg()) {
+                    alert('FFmpeg не загружен. Проверьте подключение к интернету.');
+                    return;
+                }
+
+                setExportButtonsDisabled(true);
+                exportStatus.textContent = 'Подготовка кадров для H.265...';
+
+                try {
+                    // Создаем временные кадры
+                    for (let i = 0; i < footageFrames.length; i++) {
+                        currentFrame = i;
+                        drawFrame(renderCtx, renderCanvas.width, renderCanvas.height);
+                        
+                        // Конвертируем canvas в blob
+                        const blob = await new Promise(resolve => 
+                            renderCanvas.toBlob(resolve, 'image/png')
+                        );
+                        
+                        // Записываем в файловую систему FFmpeg
+                        const frameData = await blob.arrayBuffer();
+                        ffmpeg.FS('writeFile', 
+                            `frame${i.toString().padStart(4, '0')}.png`, 
+                            new Uint8Array(frameData)
+                        );
+                        
+                        const progress = Math.round(((i + 1) / footageFrames.length) * 50);
+                        exportStatus.textContent = `Подготовка кадров... ${progress}%`;
+                    }
+
+                    exportStatus.textContent = 'Кодирование H.265... 50%';
+
+                    // Кодируем в H.265
+                    await ffmpeg.run(
+                        '-framerate', '24',
+                        '-i', 'frame%04d.png',
+                        '-c:v', 'libx265',
+                        '-preset', 'medium',
+                        '-crf', '28',
+                        '-pix_fmt', 'yuv420p',
+                        '-movflags', '+faststart',
+                        'output-h265.mp4'
+                    );
+
+                    // Получаем результат
+                    const data = ffmpeg.FS('readFile', 'output-h265.mp4');
+                    const blob = new Blob([data.buffer], { type: 'video/mp4' });
+                    
+                    // Скачивание
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'animation-h265.mp4';
+                    a.click();
+                    URL.revokeObjectURL(url);
+                    
+                    exportStatus.textContent = 'Видео H.265 сохранено!';
+                } catch (error) {
+                    console.error('Ошибка кодирования H.265:', error);
+                    exportStatus.textContent = 'Ошибка кодирования H.265!';
+                } finally {
+                    setTimeout(() => exportStatus.textContent = '', 3000);
+                    setExportButtonsDisabled(false);
+                    
+                    // Очищаем временные файлы
+                    try {
+                        for (let i = 0; i < footageFrames.length; i++) {
+                            ffmpeg.FS('unlink', `frame${i.toString().padStart(4, '0')}.png`);
+                        }
+                        ffmpeg.FS('unlink', 'output-h265.mp4');
+                    } catch (e) {
+                        // Игнорируем ошибки очистки
+                    }
+                }
+            }
+
+            // Обработчики событий
             function updateCanvasSizes() {
                 const [fullWidth, fullHeight] = document.querySelector('input[name="artboardSize"]:checked').value.split('x');
                 
@@ -337,7 +518,7 @@
                 renderCanvas.height = parseInt(fullHeight, 10);
 
                 const aspectRatio = renderCanvas.width / renderCanvas.height;
-                previewCanvas.width = 800; // Ширина превью
+                previewCanvas.width = 800;
                 previewCanvas.height = previewCanvas.width / aspectRatio;
 
                 drawFrame(previewCtx, previewCanvas.width, previewCanvas.height);
@@ -360,32 +541,32 @@
 
             logoSizeSlider.addEventListener('input', (e) => {
                 logoScale = parseFloat(e.target.value) / 100;
-                // Перерисовка произойдет в цикле анимации
             });
 
             backgroundTypeSelect.addEventListener('change', (e) => {
                 const isSolid = e.target.value === 'solid';
                 solidColorSettings.style.display = isSolid ? 'block' : 'none';
                 gradientColorSettings.style.display = isSolid ? 'none' : 'block';
-                // Перерисовка произойдет в цикле анимации
             });
 
             [solidColorInput, gradientColor1Input, gradientColor2Input].forEach(input => {
-                input.addEventListener('input', () => {
-                     // Перерисовка произойдет в цикле анимации
-                });
+                input.addEventListener('input', () => {});
             });
 
             footageSelect.addEventListener('change', (e) => {
                 loadFootage(e.target.value);
             });
 
-            exportButton.addEventListener('click', handleExport);
+            exportWebMButton.addEventListener('click', handleExportWebM);
+            exportH264Button.addEventListener('click', handleExportH264);
+            exportH265Button.addEventListener('click', handleExportH265);
 
-            // --- ИНИЦИАЛИЗАЦИЯ ---
+            // Инициализация
             function initialize() {
                 updateCanvasSizes();
                 animate();
+                // Предзагрузка FFmpeg в фоне
+                initFFmpeg();
             }
             
             initialize();
